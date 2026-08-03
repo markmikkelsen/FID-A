@@ -44,7 +44,13 @@ elseif iscell(twix_obj)
     twix_obj=twix_obj{RaidLength};
 end
 dOut.data=twix_obj.image();
-version=twix_obj.image.softwareVersion;
+if isfield(twix_obj.hdr.Meas,'SoftwareVersions')
+    if contains(twix_obj.hdr.Meas.SoftwareVersions,'XA60')
+        version='XA60';
+    end
+else
+    version=twix_obj.image.softwareVersion;
+end
 sqzSize=twix_obj.image.sqzSize; 
 sqzDims=twix_obj.image.sqzDims;
 
@@ -91,6 +97,7 @@ isColumbia_sLASER=~isempty(strfind(sequence,'svs_slaser_cu'));  %Is this the Col
 if isSpecial ||... %Catches Ralf Mekle's and CIBM version of the SPECIAL sequence 
         (strcmp(version,'vd') && isjnSpecial) ||... %and the VD/VE versions of Jamie Near's SPECIAL sequence
         (isUniversal && isempty(twix_obj.hdr.MeasYaps.sWipMemBlock.alFree{8})) ||... %Catches Pavi's MEGA-PRESS sequence
+        (strcmp(version,'XA60')) && isjnSpecial ||... %and the XA60 version of Jamie Near's SPECIAL sequence
         (strcmp(version,'vd') && isjnMP && twix_obj.image.NSet==1 );  %and the VD/VE versions of Jamie Near's MEGA-PRESS sequence
                                                                         %NOTE:  I added the twix_obj.image.NSet==1 condition to the 
                                                                         %above 'if' statement becuase I found that there is a legacy 
@@ -101,7 +108,7 @@ if isSpecial ||... %Catches Ralf Mekle's and CIBM version of the SPECIAL sequenc
                                                                         %with this new condition.                                                                     
     squeezedData=squeeze(dOut.data);
     if twix_obj.image.NCol>1 && twix_obj.image.NCha>1
-        if isjnseq && strcmpi(twix_obj.hdr.Config.SequenceString,'svs_edit') && contains(twix_obj.hdr.Dicom.SoftwareVersions,'XA60') %In XA60 version of the code, svs_edit was used which saves subspec 1 and 2 under different indices - **PT**2026
+        if isjnseq && strcmpi(twix_obj.hdr.Config.SequenceString,'svs_edit') && version=='XA60' %In XA60 version of the code, svs_edit was used which saves subspec 1 and 2 under different indices - **PT**2026
             if sum(squeezedData(:,1,2,1))~=0 %There are no zero arrays
                 data=squeezedData;
                 %sqzSize=sqzSize;
@@ -112,12 +119,19 @@ if isSpecial ||... %Catches Ralf Mekle's and CIBM version of the SPECIAL sequenc
             end
             sqzDims(end)=[]; %reset the last sqzDims to make it parsing of data run typically
         else
-            data(:,:,:,1)=squeezedData(:,:,[1:2:end-1]);
-            data(:,:,:,2)=squeezedData(:,:,[2:2:end]);
-            sqzSize=[sqzSize(1) sqzSize(2) sqzSize(3)/2 2];
+            if sqzSize(find(strcmp(sqzDims,'Ave')))>2  %This catches cases where the number of averages is only 2:
+                data(:,:,:,1)=squeezedData(:,:,[1:2:end-1]);
+                data(:,:,:,2)=squeezedData(:,:,[2:2:end]);
+                sqzSize=[sqzSize(1) sqzSize(2) sqzSize(3)/2 2];
+            else
+                data(:,:,1)=squeezedData(:,:,[1:2:end-1]);
+                data(:,:,2)=squeezedData(:,:,[2:2:end]);
+                sqzSize=[sqzSize(1) sqzSize(2) 2];
+                sqzDims={sqzDims{1:2}};
+            end
         end
     elseif twix_obj.image.NCol>1 && twix_obj.image.NCha==1
-        if isjnseq && strcmpi(twix_obj.hdr.Config.SequenceString,'svs_edit') && contains(twix_obj.hdr.Dicom.SoftwareVersions,'XA60') %In XA60 version of the code, svs_edit was used which saves subspec 1 and 2 under different indices - **PT**2026
+        if isjnseq && strcmpi(twix_obj.hdr.Config.SequenceString,'svs_edit') && version=='XA60' %In XA60 version of the code, svs_edit was used which saves subspec 1 and 2 under different indices - **PT**2026
             if sum(squeezedData(:,2,1))~=0 %There are no zero arrays
                 data=squeezedData;
                 % sqzSize=sqzSize;
@@ -188,7 +202,11 @@ seq=sequence;
 Bo=twix_obj.hdr.Dicom.flMagneticFieldStrength;
 
 %Find the number of averages:
-Naverages=twix_obj.hdr.Meas.Averages;
+if version=='XA60'   
+    Naverages = twix_obj.hdr.Meas.lAverages;
+else
+    Naverages=twix_obj.hdr.Meas.Averages;
+end
 
 %Find out if multiple coil elements were used:
 Ncoils=twix_obj.hdr.Meas.iMaxNoOfRxChannels;  
@@ -284,7 +302,7 @@ else
 end
 
 %Now index the dimension of the averages
-if strcmp(version,'vd') || strcmp(version,'ve')
+if strcmp(version,'vd') || strcmp(version,'ve') || strcmp(version,'XA60')
     if isMinn_eja || isMinn_dkd
         dims.averages=find(strcmp(sqzDims,'Set'));
     else
@@ -325,7 +343,7 @@ end
 if ~isempty(dimsToIndex)
     %Now index the dimension of the sub-spectra
     if isjnseq  || isSpecial
-        if strcmp(version,'vd') || strcmp(version,'ve')
+        if strcmp(version,'vd') || strcmp(version,'ve') || strcmp(version,'XA60')
             dims.subSpecs=find(strcmp(sqzDims,'Set'));
         else
             dims.subSpecs=find(strcmp(sqzDims,'Ida'));
@@ -470,7 +488,11 @@ dwelltime = twix_obj.hdr.MeasYaps.sRXSPEC.alDwellTime{1}*1e-9;  %Franck Lamberto
 spectralwidth=1/dwelltime;
     
 %Get TxFrq
-txfrq=twix_obj.hdr.Config.Frequency;
+if version=='XA60'
+    txfrq=twix_obj.hdr.MeasYaps.sTXSPEC.asNucleusInfo{1}.lFrequency;
+else
+    txfrq=twix_obj.hdr.Config.Frequency;
+end
 
 
 %Get Date
@@ -496,10 +518,10 @@ if dims.subSpecs ~=0
         end
     else
         averages=sz(dims.subSpecs);
-        rawAverages=1;
+        rawAverages=sz(dims.subSpecs);
         if wRefs
             averages_w=sz_w(dims.subSpecs);
-            rawAverages_w=1;
+            rawAverages_w=sz(dims.subSpecs);
         end
     end
 else
@@ -545,9 +567,15 @@ end
 if isWIP529 || isWIP859 || (isSiemens && contains(sequence,'svs_se'))
     leftshift = twix_obj.image.cutOff(1,1);
 elseif isSiemens
-    leftshift = twix_obj.image.freeParam(1);
+    if version == 'XA60'
+        leftshift = 0;
+    else
+        leftshift = twix_obj.image.freeParam(1);
+    end
 elseif isMinn_eja || isMinn_dkd
     leftshift = twix_obj.image.iceParam(5,1);
+elseif isjnseq || isjnSpecial || isjnMP
+    leftshift= 0;
 else
     leftshift = twix_obj.image.freeParam(1);
 end
@@ -558,7 +586,13 @@ end
 %Calculate t and ppm arrays using the calculated parameters:
 %Switch between different Nuclei - PT,2021
 f=[(-spectralwidth/2)+(spectralwidth/(2*sz(1))):spectralwidth/(sz(1)):(spectralwidth/2)-(spectralwidth/(2*sz(1)))];
-nucleus=twix_obj.hdr.Config.Nucleus;
+
+if version == 'XA60'
+    nucleus = twix_obj.hdr.MeasYaps.sTXSPEC.asNucleusInfo{1}.tNucleus;
+else
+    nucleus=twix_obj.hdr.Config.Nucleus;
+end
+
 switch nucleus
     case '1H'
         gamma=42.576;
